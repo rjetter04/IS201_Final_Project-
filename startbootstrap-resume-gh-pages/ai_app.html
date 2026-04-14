@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZenFlow Pro Kanban</title>
+    <style>
+        :root {
+            --bg-color: #f4f7f9;
+            --column-bg: #ebedf0;
+            --card-bg: #ffffff;
+            --primary-accent: #4a90e2;
+            --danger: #ff5f56;
+            --text-main: #333;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        header {
+            padding: 1rem 2rem;
+            background: #fff;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 10;
+        }
+
+        h1 { margin: 0; font-size: 1.5rem; color: var(--primary-accent); }
+
+        button.btn-primary {
+            background-color: var(--primary-accent);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        #board {
+            display: flex;
+            align-items: flex-start;
+            padding: 20px;
+            gap: 20px;
+            overflow-x: auto;
+            flex-grow: 1;
+            padding-bottom: 40px;
+        }
+
+        /* Column Styles */
+        .column {
+            background-color: var(--column-bg);
+            width: 300px;
+            min-width: 300px;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            max-height: 90vh;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            transition: transform 0.2s, opacity 0.2s;
+        }
+
+        .column.dragging-col {
+            opacity: 0.4;
+            transform: scale(0.95);
+        }
+
+        .column-header {
+            padding: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: grab; /* Indicates column is draggable */
+        }
+
+        .column-header:active { cursor: grabbing; }
+
+        .column-title {
+            font-weight: bold;
+            text-transform: uppercase;
+            font-size: 0.85rem;
+            color: #666;
+            pointer-events: none;
+        }
+
+        /* Task Styles */
+        .task-list {
+            padding: 0 10px 10px 10px;
+            flex-grow: 1;
+            min-height: 50px;
+            overflow-y: auto;
+        }
+
+        .task-card {
+            background: var(--card-bg);
+            padding: 12px;
+            margin-bottom: 10px;
+            border-radius: 6px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            cursor: grab;
+            position: relative;
+        }
+
+        .task-card.dragging-task { opacity: 0.3; }
+
+        .delete-btn {
+            background: none;
+            border: none;
+            color: #ccc;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+
+        .delete-btn:hover { color: var(--danger); }
+
+        .add-task-btn {
+            background: none;
+            border: 2px dashed #ccc;
+            margin: 10px;
+            padding: 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            color: #777;
+            text-align: center;
+        }
+
+        .add-task-btn:hover { border-color: var(--primary-accent); color: var(--primary-accent); }
+
+        .drop-zone-active { background-color: rgba(74, 144, 226, 0.1); border-radius: 8px; }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>ZenFlow Pro</h1>
+    <button class="btn-primary" onclick="addColumn()">+ Add Column</button>
+</header>
+
+<main id="board">
+    </main>
+
+<script>
+    let state = JSON.parse(localStorage.getItem('kanbanStateV2')) || [
+        { id: 'col-1', title: 'To Do', tasks: [{ id: 't1', content: 'Drag me to another list' }] },
+        { id: 'col-2', title: 'In Progress', tasks: [] },
+        { id: 'col-3', title: 'Done', tasks: [] }
+    ];
+
+    let draggedItemId = null;
+    let draggedType = null; // 'task' or 'column'
+    let sourceColId = null;
+
+    function save() {
+        localStorage.setItem('kanbanStateV2', JSON.stringify(state));
+        render();
+    }
+
+    function addColumn() {
+        const title = prompt("Column Name:");
+        if (title) {
+            state.push({ id: 'col-' + Date.now(), title, tasks: [] });
+            save();
+        }
+    }
+
+    function addEmptyTask(colId) {
+        const content = prompt("Task description:");
+        if (content) {
+            const col = state.find(c => c.id === colId);
+            col.tasks.push({ id: 'task-' + Date.now(), content });
+            save();
+        }
+    }
+
+    // --- Drag & Drop Logic ---
+
+    // Column Dragging
+    function handleColDragStart(e, index) {
+        draggedType = 'column';
+        draggedItemId = index;
+        e.target.classList.add('dragging-col');
+        e.dataTransfer.effectAllowed = 'move';
+    }
+
+    // Task Dragging
+    function handleTaskDragStart(e, taskId, colId) {
+        e.stopPropagation(); // Prevent column drag from triggering
+        draggedType = 'task';
+        draggedItemId = taskId;
+        sourceColId = colId;
+        e.target.classList.add('dragging-task');
+    }
+
+    function handleDragOver(e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+    }
+
+    function handleDrop(e, targetColId, targetColIdx) {
+        e.preventDefault();
+        
+        if (draggedType === 'column') {
+            // Reorder columns
+            const colToMove = state.splice(draggedItemId, 1)[0];
+            state.splice(targetColIdx, 0, colToMove);
+        } 
+        else if (draggedType === 'task') {
+            // Move task to new column
+            if (sourceColId === targetColId) return;
+            const sourceCol = state.find(c => c.id === sourceColId);
+            const destCol = state.find(c => c.id === targetColId);
+            const taskIdx = sourceCol.tasks.findIndex(t => t.id === draggedItemId);
+            const [task] = sourceCol.tasks.splice(taskIdx, 1);
+            destCol.tasks.push(task);
+        }
+        
+        save();
+    }
+
+    function deleteColumn(id) {
+        if(confirm("Delete this column?")) {
+            state = state.filter(c => c.id !== id);
+            save();
+        }
+    }
+
+    function deleteTask(colId, taskId) {
+        const col = state.find(c => c.id === colId);
+        col.tasks = col.tasks.filter(t => t.id !== taskId);
+        save();
+    }
+
+    function render() {
+        const board = document.getElementById('board');
+        board.innerHTML = '';
+
+        state.forEach((column, index) => {
+            const colEl = document.createElement('div');
+            colEl.className = 'column';
+            colEl.draggable = true;
+            
+            // Column Drag Events
+            colEl.ondragstart = (e) => handleColDragStart(e, index);
+            colEl.ondragover = handleDragOver;
+            colEl.ondrop = (e) => handleDrop(e, column.id, index);
+            colEl.ondragend = () => render();
+
+            colEl.innerHTML = `
+                <div class="column-header">
+                    <span class="column-title">${column.title}</span>
+                    <button class="delete-btn" onclick="deleteColumn('${column.id}')">✕</button>
+                </div>
+                <div class="task-list">
+                    ${column.tasks.map(task => `
+                        <div class="task-card" 
+                             draggable="true"
+                             ondragstart="handleTaskDragStart(event, '${task.id}', '${column.id}')">
+                            ${task.content}
+                            <button class="delete-btn" style="float:right" onclick="deleteTask('${column.id}', '${task.id}')">×</button>
+                        </div>
+                    `).join('')}
+                </div>
+                <button class="add-task-btn" onclick="addEmptyTask('${column.id}')">+ New Task</button>
+            `;
+            board.appendChild(colEl);
+        });
+    }
+
+    render();
+</script>
+
+</body>
+</html>
